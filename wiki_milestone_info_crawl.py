@@ -1,100 +1,88 @@
 import requests
 from bs4 import BeautifulSoup
-from datetime import datetime
-import re
+from collections import defaultdict
+import datetime
+import configparser
 
-def get_article_creation_time(wiki_url, article_title):
-    try:
-        article_url = f"{wiki_url}{article_title}"
-        response = requests.get(article_url)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.content, "html.parser")
+# Base URL of your wiki (change accordingly)
 
-        history_link = soup.find("li", id="ca-history")
-        if history_link:
-            history_url = wiki_url + history_link.find("a")["href"]
-            if "https://www.maintal.wiki/wiki//w" in history_url: #replace with your wiki's URL
-                history_url = history_url.replace("https://www.maintal.wiki/wiki//w/", "https://www.maintal.wiki/w/")
+# read config
+config = configparser.ConfigParser()
+try:
+    config.read('config.ini')
+except ValueError as e:
+    print(f"Fehler: {e}")
+    input("..")
+WIKI_BASE_URL = config['wiki']['url'] 
+print(WIKI_BASE_URL)
 
-            history_response = requests.get(history_url)
-            history_response.raise_for_status()
-            history_soup = BeautifulSoup(history_response.content, "html.parser")
+# WIKI_BASE_URL = "https://www.mywiki.com/w"
+# or config.ini:
+# [wiki]
+# url= https://www.mywiki.com/w
 
-            first_history_entry = history_soup.find("li", class_="mw-history-item")
-            if first_history_entry:
-                timestamp_element = first_history_entry.find("a", class_="mw-changeslist-date")
-                if timestamp_element:
-                    timestamp_text = timestamp_element.text.strip()
-                    formats = ["%d %B %Y at %H:%M", "%Y-%m-%d %H:%M:%S", "%B %d, %Y, %H:%M %p", "%Y-%m-%dT%H:%M:%SZ"]
-                    for fmt in formats:
-                        try:
-                            creation_time = datetime.strptime(timestamp_text, fmt)
-                            return creation_time
-                        except ValueError:
-                            pass
-                    print(f"Warning: Could not parse date format: {timestamp_text} for {article_title}")
-                    return None
-        print(f"Warning: History link not found for article {article_title}")
-        return None
+WIKI_API_URL = f"{WIKI_BASE_URL}/api.php"
 
-    except requests.exceptions.RequestException as e:
-        print(f"Error fetching {article_url}: {e}")
-        return None
-    except Exception as e:
-        print(f"An unexpected error occurred: {e}")
-        return None
-
-def find_100th_article_creation(wiki_url, start_page="Hauptseite"): #start_page can be changed. (or Main_Page)
-    article_creation_times = {}
-    article_count = 0
-    next_page = start_page
-
+# Function to get all article titles
+def get_all_articles():
+    articles = []
+    cont = None
     while True:
-        try:
-            page_url = f"{wiki_url}{next_page}"
-            response = requests.get(page_url)
-            response.raise_for_status()
-            soup = BeautifulSoup(response.content, "html.parser")
-
-            creation_time = get_article_creation_time(wiki_url, next_page)
-            if creation_time:
-                article_creation_times[next_page] = creation_time
-                article_count += 1
-
-            if article_count >= 100:
-                sorted_creation_times = sorted(article_creation_times.values())
-                return sorted_creation_times[99] # 100th article
-
-            # Find the next page link (this depends on your wiki's structure)
-            next_link = soup.find("a", string=re.compile(r"next page", re.IGNORECASE)) #you may need to change this
-            if not next_link:
-                next_link = soup.find("a", string=re.compile(r"Next page", re.IGNORECASE)) #try other variations
-            if not next_link:
-                next_link = soup.find("a", string=re.compile(r"weiter", re.IGNORECASE)) #german next page.
-
-            if next_link:
-                next_page = next_link["href"].split("/wiki/")[-1] #get the page title from the link.
-            else:
-                break # No more pages
-
-        except requests.exceptions.RequestException as e:
-            print(f"Error fetching {page_url}: {e}")
+        params = {
+            "action": "query",
+            "list": "allpages",
+            "aplimit": "max",
+            "format": "json"
+        }
+        if cont:
+            params.update(cont)
+        
+        response = requests.get(WIKI_API_URL, params=params).json()
+        articles.extend([page["title"] for page in response["query"]["allpages"]])
+        cont = response.get("continue")
+        if not cont:
             break
-        except Exception as e:
-            print(f"An unexpected error occurred: {e}")
-            break
+    
+    return articles
 
-    return None # If less than 100 articles were found
+# Function to get the creation date of an article
+def get_creation_date(title):
+    params = {
+        "action": "query",
+        "prop": "revisions",
+        "rvlimit": 1,
+        "rvprop": "timestamp",
+        "rvdir": "newer",
+        "titles": title,
+        "format": "json"
+    }
+    response = requests.get(WIKI_API_URL, params=params).json()
+    pages = response.get("query", {}).get("pages", {})
+    for page in pages.values():
+        if "revisions" in page:
+            return page["revisions"][0]["timestamp"]
+    return None
 
-# Example usage:
+# Main function to determine when the wiki reached 100 articles
+def find_article_number(number):
+    articles = get_all_articles()
+    creation_data = []
+    
+    for title in articles:
+        print(title)
+        date = get_creation_date(title)
+        if date:
+            creation_data.append((title, datetime.datetime.fromisoformat(date.replace("Z", ""))))
+    
+    creation_data.sort(key=lambda x: x[1])
+    if len(creation_data) >= number:
+        return creation_data[number - 1][1].date(), creation_data[number - 1][0], len(articles)
+    else:
+        return f"Wiki does not have {number} articles yet.", None, None
 
-wiki_base_url = "https://yourwiki.example.com/wiki/" # Replace with your wiki's URL
-wiki_base_url = "https://www.maintal.wiki/wiki/"
-
-creation_date_100th = find_100th_article_creation(wiki_base_url)
-
-if creation_date_100th:
-    print(f"The 100th article was created on: {creation_date_100th}")
-else:
-    print("Could not determine the 100th article creation date.")
-
+# Run the script
+if __name__ == "__main__":
+    number = 150
+    date, title, anzahl_artikel = find_article_number(number)
+    print(f"Date when article number {number} was created:", date)
+    print(f"Title of the article number {number}:", title)
