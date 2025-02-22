@@ -63,26 +63,28 @@ def get_creation_date(title):
             return page["revisions"][0]["timestamp"]
     return None
 
-# Main function to determine when the wiki reached 100 articles
-def find_article_number(number):
+# Main function to get data for every 50th article
+def get_milestone_articles():
     articles = get_all_articles()
     creation_data = []
     
     for title in articles:
-        print(title)
+        print(f"{title} ({len(articles)})")
         date = get_creation_date(title)
         if date:
             creation_data.append((title, datetime.datetime.fromisoformat(date.replace("Z", ""))))
     
     creation_data.sort(key=lambda x: x[1])
-    if len(creation_data) >= number:
-        return creation_data[number - 1][1].date(), creation_data[number - 1][0], len(articles)
-    else:
-        return f"Wiki does not have {number} articles yet.", None, None
+    milestones = {}
+    
+    for i in range(50, len(creation_data) + 1, 50):
+        title, date = creation_data[i - 1]
+        milestones[i] = (date.date(), title)
+    
+    return milestones
 
 # Run the script
 if __name__ == "__main__":
-    number = 150
-    date, title, anzahl_artikel = find_article_number(number)
-    print(f"Date when article number {number} was created:", date)
-    print(f"Title of the article number {number}:", title)
+    milestones = get_milestone_articles()
+    for num, (date, title) in milestones.items():
+        print(f"{num}, {date}, {title}")
