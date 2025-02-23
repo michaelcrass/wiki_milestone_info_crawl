@@ -3,4 +3,5 @@ This python script searches for every 50th article in a Mediawiki installation a
 
 Example config.ini:
 > [wiki]
+>
 > url = https://www.mywiki.com/w
